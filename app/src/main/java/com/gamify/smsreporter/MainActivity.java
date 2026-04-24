@@ -61,7 +61,9 @@ public class MainActivity extends Activity {
     private TextView statusServer;
     private TextView statusStats;
     private EditText serverUrlInput;
-    private EditText tokenInput;
+    private EditText usernameInput;
+    private EditText passwordInput;
+    private TextView loginStatusText;
     private Handler handler = new Handler(Looper.getMainLooper());
     private ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -154,11 +156,34 @@ public class MainActivity extends Activity {
             serverUrlInput = buildInput("https://...");
             group.addView(serverUrlInput, matchWrap(dp(6)));
 
-            group.addView(buildFieldLabel("AUTH TOKEN"), matchWrap(dp(16)));
-            tokenInput = buildInput("JWT Token");
-            tokenInput.setSingleLine(false);
-            tokenInput.setMaxLines(3);
-            group.addView(tokenInput, matchWrap(dp(6)));
+            return group;
+        }), matchWrap(dp(12)));
+
+        content.addView(buildButton("SAVE SERVER URL", C_BTN, C_TEXT, v -> saveConfig()), matchWrap(dp(12)));
+
+        // ── 登录区 ──
+        content.addView(buildSectionTitle("LOGIN", "账号登录"), matchWrap(dp(32)));
+
+        // 登录状态
+        loginStatusText = new TextView(this);
+        loginStatusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        loginStatusText.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        loginStatusText.setPadding(0, dp(4), 0, dp(8));
+        content.addView(loginStatusText, matchWrap(dp(4)));
+
+        content.addView(buildCardGroup(() -> {
+            LinearLayout group = new LinearLayout(this);
+            group.setOrientation(LinearLayout.VERTICAL);
+            group.setPadding(dp(16), dp(16), dp(16), dp(16));
+
+            group.addView(buildFieldLabel("USERNAME"));
+            usernameInput = buildInput("用户名");
+            group.addView(usernameInput, matchWrap(dp(6)));
+
+            group.addView(buildFieldLabel("PASSWORD"), matchWrap(dp(16)));
+            passwordInput = buildInput("密码");
+            passwordInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            group.addView(passwordInput, matchWrap(dp(6)));
 
             return group;
         }), matchWrap(dp(12)));
@@ -171,7 +196,7 @@ public class MainActivity extends Activity {
         btnRow.addView(buildButton("TEST CONNECTION", C_BTN, C_ACCENT, v -> testConnection()));
         View spacer = new View(this);
         btnRow.addView(spacer, new LinearLayout.LayoutParams(dp(12), 0));
-        btnRow.addView(buildButton("SAVE", C_BTN, C_TEXT, v -> saveConfig()));
+        btnRow.addView(buildAccentButton("LOGIN", v -> login()));
 
         content.addView(btnRow, matchWrap(dp(16)));
 
@@ -517,22 +542,132 @@ public class MainActivity extends Activity {
     private void loadConfig() {
         SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
         serverUrlInput.setText(config.getString("server_url", DEFAULT_SERVER));
-        tokenInput.setText(config.getString("auth_token", ""));
+        // 显示登录状态
+        String loggedUser = config.getString("logged_username", "");
+        String token = config.getString("auth_token", "");
+        if (!token.isEmpty() && !loggedUser.isEmpty()) {
+            loginStatusText.setText("已登录: " + loggedUser);
+            loginStatusText.setTextColor(Color.parseColor(C_GREEN));
+        } else {
+            loginStatusText.setText("未登录");
+            loginStatusText.setTextColor(Color.parseColor(C_RED));
+        }
     }
 
     private void saveConfig() {
         String url = serverUrlInput.getText().toString().trim();
-        String token = tokenInput.getText().toString().trim();
         if (url.isEmpty()) url = DEFAULT_SERVER;
 
         SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
         config.edit()
             .putString("server_url", url)
-            .putString("auth_token", token)
             .apply();
 
-        showToast("Configuration saved");
+        showToast("Server URL saved");
         refreshStatus();
+    }
+
+    private void login() {
+        String username = usernameInput.getText().toString().trim();
+        String password = passwordInput.getText().toString().trim();
+        if (username.isEmpty() || password.isEmpty()) {
+            showToast("请填写用户名和密码");
+            return;
+        }
+
+        loginStatusText.setText("登录中...");
+        loginStatusText.setTextColor(Color.parseColor(C_ACCENT));
+
+        SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
+        String serverUrl = config.getString("server_url", DEFAULT_SERVER);
+
+        executor.execute(() -> {
+            try {
+                URL url = new URL(serverUrl + "/api/auth/login");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(15000);
+
+                String json = "{\"username\":" + escapeJson(username) + ",\"password\":" + escapeJson(password) + "}";
+                java.io.OutputStream os = conn.getOutputStream();
+                os.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                os.flush();
+                os.close();
+
+                int code = conn.getResponseCode();
+                if (code == 200) {
+                    java.io.InputStream is = conn.getInputStream();
+                    byte[] buf = new byte[4096];
+                    int len = is.read(buf);
+                    is.close();
+                    String resp = new String(buf, 0, len, java.nio.charset.StandardCharsets.UTF_8);
+                    // 简单解析token字段
+                    String token = extractJsonValue(resp, "token");
+                    if (token != null && !token.isEmpty()) {
+                        config.edit()
+                            .putString("auth_token", token)
+                            .putString("logged_username", username)
+                            .apply();
+                        handler.post(() -> {
+                            loginStatusText.setText("已登录: " + username);
+                            loginStatusText.setTextColor(Color.parseColor(C_GREEN));
+                            passwordInput.setText("");
+                            showToast("登录成功");
+                            refreshStatus();
+                        });
+                    } else {
+                        handler.post(() -> {
+                            loginStatusText.setText("登录失败: 响应异常");
+                            loginStatusText.setTextColor(Color.parseColor(C_RED));
+                        });
+                    }
+                } else {
+                    java.io.InputStream es = conn.getErrorStream();
+                    String errMsg = "HTTP " + code;
+                    if (es != null) {
+                        byte[] buf = new byte[2048];
+                        int len = es.read(buf);
+                        if (len > 0) {
+                            String errResp = new String(buf, 0, len, java.nio.charset.StandardCharsets.UTF_8);
+                            String errDetail = extractJsonValue(errResp, "error");
+                            if (errDetail != null) errMsg = errDetail;
+                        }
+                        es.close();
+                    }
+                    final String msg = errMsg;
+                    handler.post(() -> {
+                        loginStatusText.setText("登录失败: " + msg);
+                        loginStatusText.setTextColor(Color.parseColor(C_RED));
+                    });
+                }
+                conn.disconnect();
+            } catch (Exception e) {
+                handler.post(() -> {
+                    loginStatusText.setText("登录失败: " + e.getMessage());
+                    loginStatusText.setTextColor(Color.parseColor(C_RED));
+                });
+            }
+        });
+    }
+
+    // 简单JSON值提取（避免引入外部JSON库）
+    private String extractJsonValue(String json, String key) {
+        String search = "\"" + key + "\"";
+        int idx = json.indexOf(search);
+        if (idx < 0) return null;
+        int colonIdx = json.indexOf(':', idx + search.length());
+        if (colonIdx < 0) return null;
+        int start = json.indexOf('"', colonIdx + 1);
+        if (start < 0) return null;
+        int end = json.indexOf('"', start + 1);
+        while (end > 0 && json.charAt(end - 1) == '\\') {
+            end = json.indexOf('"', end + 1);
+        }
+        if (end < 0) return null;
+        return json.substring(start + 1, end);
     }
 
     // ── 测试连接 ──────────────────────────────────────────────────
@@ -602,6 +737,12 @@ public class MainActivity extends Activity {
     }
 
     // ── 工具 ────────────────────────────────────────────────────
+
+    private String escapeJson(String s) {
+        if (s == null) return "null";
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
+                       .replace("\n", "\\n").replace("\r", "\\r") + "\"";
+    }
 
     private int dp(int value) {
         return (int) TypedValue.applyDimension(
