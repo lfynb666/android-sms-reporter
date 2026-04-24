@@ -2,6 +2,7 @@ package com.gamify.smsreporter;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -10,10 +11,13 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -23,7 +27,6 @@ import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -33,8 +36,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * SMS Reporter - 原生单页面，视觉风格对齐gamify前端
- * 功能：权限申请 + 服务器连接配置 + 服务状态显示
+ * SMS Reporter - 原生单页面（不可滚动），视觉风格对齐gamify前端
+ * 功能：权限申请（含电池优化+自启动） + 服务状态 + 登录
  */
 public class MainActivity extends Activity {
     private static final String TAG = "SMSReporter";
@@ -57,10 +60,11 @@ public class MainActivity extends Activity {
 
     private TextView statusSms;
     private TextView statusNotification;
+    private TextView statusBattery;
+    private TextView statusAutoStart;
     private TextView statusService;
     private TextView statusServer;
     private TextView statusStats;
-    private EditText serverUrlInput;
     private EditText usernameInput;
     private EditText passwordInput;
     private TextView loginStatusText;
@@ -85,27 +89,21 @@ public class MainActivity extends Activity {
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         }
 
-        // 根布局
-        FrameLayout rootFrame = new FrameLayout(this);
-        rootFrame.setBackgroundColor(Color.parseColor(C_BG));
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setVerticalScrollBarEnabled(false);
-
+        // 根布局（不使用ScrollView，真正的单页）
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.parseColor(C_BG));
 
-        // ── 顶部Header Bar（模拟 .page-header-bar） ──
+        // ── 顶部Header Bar ──
         root.addView(buildHeaderBar());
 
-        // ── 三色装饰线（模拟 .deco-line） ──
+        // ── 三色装饰线 ──
         root.addView(buildDecoLine());
 
-        // ── 主内容区 ──
+        // ── 主内容区（权重填充剩余空间） ──
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(20), dp(24), dp(20), dp(48));
+        content.setPadding(dp(16), dp(12), dp(16), dp(12));
 
         // ── 权限状态区 ──
         content.addView(buildSectionTitle("PERMISSION", "权限状态"));
@@ -113,101 +111,82 @@ public class MainActivity extends Activity {
             LinearLayout group = new LinearLayout(this);
             group.setOrientation(LinearLayout.VERTICAL);
 
-            statusSms = buildStatusItem("SMS RECEIVE / READ");
+            statusSms = buildStatusItem("SMS");
             group.addView(statusSms);
             group.addView(buildDivider());
 
             statusNotification = buildStatusItem("NOTIFICATION");
             group.addView(statusNotification);
+            group.addView(buildDivider());
+
+            statusBattery = buildStatusItem("BATTERY OPT");
+            group.addView(statusBattery);
+            group.addView(buildDivider());
+
+            statusAutoStart = buildStatusItem("AUTO START");
+            group.addView(statusAutoStart);
 
             return group;
-        }), matchWrap(dp(12)));
+        }), matchWrap(dp(8)));
 
-        content.addView(buildAccentButton("REQUEST ALL PERMISSIONS", v -> requestAllPermissions()), matchWrap(dp(16)));
+        content.addView(buildAccentButton("REQUEST ALL PERMISSIONS", v -> requestAllPermissions()), matchWrap(dp(10)));
 
         // ── 服务状态区 ──
-        content.addView(buildSectionTitle("SERVICE STATUS", "服务状态"), matchWrap(dp(32)));
+        content.addView(buildSectionTitle("STATUS", "服务状态"), matchWrap(dp(16)));
         content.addView(buildCardGroup(() -> {
             LinearLayout group = new LinearLayout(this);
             group.setOrientation(LinearLayout.VERTICAL);
 
-            statusService = buildStatusItem("FOREGROUND SERVICE");
+            statusService = buildStatusItem("SERVICE");
             group.addView(statusService);
             group.addView(buildDivider());
 
-            statusServer = buildStatusItem("SERVER CONNECTION");
+            statusServer = buildStatusItem("SERVER");
             group.addView(statusServer);
             group.addView(buildDivider());
 
-            statusStats = buildStatusItem("REPORT STATS");
+            statusStats = buildStatusItem("STATS");
             group.addView(statusStats);
 
             return group;
-        }), matchWrap(dp(12)));
-
-        // ── 服务器配置区 ──
-        content.addView(buildSectionTitle("CONFIGURATION", "服务器配置"), matchWrap(dp(32)));
-        content.addView(buildCardGroup(() -> {
-            LinearLayout group = new LinearLayout(this);
-            group.setOrientation(LinearLayout.VERTICAL);
-            group.setPadding(dp(16), dp(16), dp(16), dp(16));
-
-            group.addView(buildFieldLabel("SERVER URL"));
-            serverUrlInput = buildInput("https://...");
-            group.addView(serverUrlInput, matchWrap(dp(6)));
-
-            return group;
-        }), matchWrap(dp(12)));
-
-        content.addView(buildButton("SAVE SERVER URL", C_BTN, C_TEXT, v -> saveConfig()), matchWrap(dp(12)));
+        }), matchWrap(dp(8)));
 
         // ── 登录区 ──
-        content.addView(buildSectionTitle("LOGIN", "账号登录"), matchWrap(dp(32)));
+        content.addView(buildSectionTitle("LOGIN", "账号登录"), matchWrap(dp(16)));
 
         // 登录状态
         loginStatusText = new TextView(this);
-        loginStatusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        loginStatusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         loginStatusText.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-        loginStatusText.setPadding(0, dp(4), 0, dp(8));
-        content.addView(loginStatusText, matchWrap(dp(4)));
+        loginStatusText.setPadding(0, dp(2), 0, dp(4));
+        content.addView(loginStatusText, matchWrap(dp(2)));
 
         content.addView(buildCardGroup(() -> {
             LinearLayout group = new LinearLayout(this);
             group.setOrientation(LinearLayout.VERTICAL);
-            group.setPadding(dp(16), dp(16), dp(16), dp(16));
+            group.setPadding(dp(12), dp(10), dp(12), dp(10));
 
             group.addView(buildFieldLabel("USERNAME"));
             usernameInput = buildInput("用户名");
-            group.addView(usernameInput, matchWrap(dp(6)));
+            group.addView(usernameInput, matchWrap(dp(4)));
 
-            group.addView(buildFieldLabel("PASSWORD"), matchWrap(dp(16)));
+            group.addView(buildFieldLabel("PASSWORD"), matchWrap(dp(8)));
             passwordInput = buildInput("密码");
             passwordInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-            group.addView(passwordInput, matchWrap(dp(6)));
+            group.addView(passwordInput, matchWrap(dp(4)));
 
             return group;
-        }), matchWrap(dp(12)));
+        }), matchWrap(dp(6)));
 
-        // 按钮行
-        LinearLayout btnRow = new LinearLayout(this);
-        btnRow.setOrientation(LinearLayout.HORIZONTAL);
-        btnRow.setGravity(Gravity.END);
+        // 登录按钮
+        content.addView(buildAccentButton("LOGIN", v -> login()), matchWrap(dp(10)));
 
-        btnRow.addView(buildButton("TEST CONNECTION", C_BTN, C_ACCENT, v -> testConnection()));
-        View spacer = new View(this);
-        btnRow.addView(spacer, new LinearLayout.LayoutParams(dp(12), 0));
-        btnRow.addView(buildAccentButton("LOGIN", v -> login()));
+        // 用权重让内容区填充剩余空间
+        LinearLayout.LayoutParams contentLp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        root.addView(content, contentLp);
 
-        content.addView(btnRow, matchWrap(dp(16)));
-
-        // ── 操作区 ──
-        content.addView(buildSectionTitle("ACTIONS", "操作"), matchWrap(dp(32)));
-        content.addView(buildButton("RESTART SERVICE", C_BTN, C_TEXT, v -> restartService()), matchWrap(dp(12)));
-
-        root.addView(content);
-        scroll.addView(root);
-        rootFrame.addView(scroll);
-        setContentView(rootFrame);
+        setContentView(root);
 
         // 初始化
         loadConfig();
@@ -241,18 +220,18 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ── 顶部Header（模拟 .page-header-bar） ──────────────────────
+    // ── 顶部Header ──────────────────────────────────────────────
 
     private View buildHeaderBar() {
         FrameLayout header = new FrameLayout(this);
         header.setBackgroundColor(Color.parseColor(C_HEADER));
-        int headerH = dp(72);
+        int headerH = dp(52);
 
-        // 背景大字（模拟 .header-deco）
+        // 背景大字
         TextView deco = new TextView(this);
         deco.setText("SMS REPORTER");
         deco.setTextColor(Color.parseColor("#0d0d0d"));
-        deco.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28);
+        deco.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
         deco.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
         deco.setLetterSpacing(0.25f);
         deco.setGravity(Gravity.CENTER);
@@ -261,11 +240,11 @@ public class MainActivity extends Activity {
         decoLp.gravity = Gravity.CENTER;
         header.addView(deco, decoLp);
 
-        // 前景标题（模拟 .header-title）
+        // 前景标题
         TextView title = new TextView(this);
         title.setText("SMS REPORTER");
         title.setTextColor(Color.parseColor("#ffffff"));
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         title.setLetterSpacing(0.1f);
         title.setGravity(Gravity.CENTER);
@@ -279,7 +258,7 @@ public class MainActivity extends Activity {
         return header;
     }
 
-    // ── 三色装饰线（模拟 .deco-line） ───────────────────────────
+    // ── 三色装饰线 ───────────────────────────────────────────────
 
     private View buildDecoLine() {
         View line = new View(this) {
@@ -289,13 +268,10 @@ public class MainActivity extends Activity {
                 int w = getWidth();
                 int h = getHeight();
                 Paint p = new Paint();
-                // 粉色段
                 p.setColor(Color.parseColor(C_PINK));
                 canvas.drawRect(0, 0, w / 3f, h, p);
-                // 黄色段
                 p.setColor(Color.parseColor(C_ACCENT));
                 canvas.drawRect(w / 3f, 0, w * 2f / 3f, h, p);
-                // 绿色段
                 p.setColor(Color.parseColor(C_GREEN));
                 canvas.drawRect(w * 2f / 3f, 0, w, h, p);
             }
@@ -305,35 +281,33 @@ public class MainActivity extends Activity {
         return line;
     }
 
-    // ── Section标题（模拟 .section-title） ───────────────────────
+    // ── Section标题 ──────────────────────────────────────────────
 
     private View buildSectionTitle(String enText, String cnText) {
         LinearLayout section = new LinearLayout(this);
         section.setOrientation(LinearLayout.VERTICAL);
-        section.setPadding(0, dp(8), 0, 0);
+        section.setPadding(0, dp(4), 0, 0);
 
-        // 英文小标签（灰色底白色斜切块）
         TextView en = new TextView(this);
         en.setText(enText);
         en.setTextColor(Color.parseColor(C_TEXT_SEC));
-        en.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        en.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         en.setTypeface(Typeface.create("sans-serif-condensed", Typeface.NORMAL));
         en.setLetterSpacing(0.15f);
         section.addView(en);
 
-        // 中文大标题
         TextView cn = new TextView(this);
         cn.setText(cnText);
         cn.setTextColor(Color.parseColor("#ffffff"));
-        cn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        cn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         cn.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-        cn.setPadding(0, dp(2), 0, 0);
+        cn.setPadding(0, dp(1), 0, 0);
         section.addView(cn);
 
         return section;
     }
 
-    // ── 卡片容器（模拟 .interact-card / .checkin-card 左侧黄条） ─
+    // ── 卡片容器 ─────────────────────────────────────────────────
 
     private interface CardContentBuilder {
         View build();
@@ -342,38 +316,35 @@ public class MainActivity extends Activity {
     private View buildCardGroup(CardContentBuilder builder) {
         FrameLayout card = new FrameLayout(this);
 
-        // 卡片背景+边框
         GradientDrawable cardBg = new GradientDrawable();
         cardBg.setColor(Color.parseColor(C_CARD));
         cardBg.setStroke(1, Color.parseColor(C_BORDER));
         card.setBackground(cardBg);
 
-        // 左侧黄色竖条（4dp宽，模拟 ::before）
         View accent = new View(this);
         accent.setBackgroundColor(Color.parseColor(C_ACCENT));
-        FrameLayout.LayoutParams accentLp = new FrameLayout.LayoutParams(dp(4), ViewGroup.LayoutParams.MATCH_PARENT);
+        FrameLayout.LayoutParams accentLp = new FrameLayout.LayoutParams(dp(3), ViewGroup.LayoutParams.MATCH_PARENT);
         accentLp.gravity = Gravity.START;
         card.addView(accent, accentLp);
 
-        // 内容区（左侧留出4dp给黄条）
-        View content = builder.build();
+        View contentView = builder.build();
         FrameLayout.LayoutParams contentLp = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        contentLp.leftMargin = dp(4);
-        card.addView(content, contentLp);
+        contentLp.leftMargin = dp(3);
+        card.addView(contentView, contentLp);
 
         return card;
     }
 
-    // ── 状态行 ──────────────────────────────────────────────────
+    // ── 状态行 ───────────────────────────────────────────────────
 
     private TextView buildStatusItem(String label) {
         TextView tv = new TextView(this);
         tv.setText(label + "  --");
         tv.setTextColor(Color.parseColor(C_TEXT_SEC));
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         tv.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-        tv.setPadding(dp(16), dp(14), dp(16), dp(14));
+        tv.setPadding(dp(12), dp(8), dp(12), dp(8));
         return tv;
     }
 
@@ -385,7 +356,7 @@ public class MainActivity extends Activity {
         return div;
     }
 
-    // ── 按钮（模拟 .btn 带左侧黄色小竖条） ─────────────────────
+    // ── 按钮 ─────────────────────────────────────────────────────
 
     private View buildAccentButton(String text, View.OnClickListener listener) {
         return buildButton(text, C_ACCENT, C_BG, listener);
@@ -394,30 +365,27 @@ public class MainActivity extends Activity {
     private View buildButton(String text, String bgColor, String textColor, View.OnClickListener listener) {
         FrameLayout wrapper = new FrameLayout(this);
 
-        // 按钮背景
         GradientDrawable btnBg = new GradientDrawable();
         btnBg.setColor(Color.parseColor(bgColor));
         wrapper.setBackground(btnBg);
 
-        // 左侧黄色小竖条（模拟 .btn::after）
         if (!bgColor.equals(C_ACCENT)) {
             View bar = new View(this);
             bar.setBackgroundColor(Color.parseColor(C_ACCENT));
-            FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(dp(3), dp(18));
+            FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(dp(3), dp(14));
             barLp.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
             barLp.leftMargin = dp(6);
             wrapper.addView(bar, barLp);
         }
 
-        // 按钮文字
         TextView btn = new TextView(this);
         btn.setText(text);
         btn.setTextColor(Color.parseColor(textColor));
-        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         btn.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         btn.setLetterSpacing(0.05f);
         btn.setGravity(Gravity.CENTER);
-        btn.setPadding(dp(20), dp(14), dp(20), dp(14));
+        btn.setPadding(dp(16), dp(10), dp(16), dp(10));
         wrapper.addView(btn);
 
         wrapper.setClickable(true);
@@ -425,31 +393,30 @@ public class MainActivity extends Activity {
         return wrapper;
     }
 
-    // ── 字段标签 ────────────────────────────────────────────────
+    // ── 字段标签 ─────────────────────────────────────────────────
 
     private TextView buildFieldLabel(String text) {
         TextView tv = new TextView(this);
         tv.setText(text);
         tv.setTextColor(Color.parseColor(C_TEXT_DIM));
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         tv.setTypeface(Typeface.create("sans-serif-condensed", Typeface.NORMAL));
         tv.setLetterSpacing(0.15f);
         return tv;
     }
 
-    // ── 输入框（模拟 .ip-input / .sms-textarea） ────────────────
+    // ── 输入框 ───────────────────────────────────────────────────
 
     private EditText buildInput(String hint) {
         EditText et = new EditText(this);
         et.setHint(hint);
         et.setTextColor(Color.parseColor("#d9d9d9"));
         et.setHintTextColor(Color.parseColor(C_TEXT_DIM));
-        et.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        et.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         et.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
         et.setSingleLine(true);
-        et.setPadding(dp(12), dp(10), dp(12), dp(10));
+        et.setPadding(dp(10), dp(8), dp(10), dp(8));
 
-        // 模拟border: 1px solid rgba(255,255,255,.08); focus时border-color: rgba(255,250,0,.3)
         GradientDrawable inputBg = new GradientDrawable();
         inputBg.setColor(Color.parseColor(C_BG));
         inputBg.setStroke(1, Color.parseColor("#1f1f1f"));
@@ -465,9 +432,10 @@ public class MainActivity extends Activity {
         return et;
     }
 
-    // ── 权限 ──────────────────────────────────────────────────────
+    // ── 权限申请 ─────────────────────────────────────────────────
 
     private void requestAllPermissions() {
+        // 1. 运行时权限（SMS + 通知）
         if (Build.VERSION.SDK_INT >= 23) {
             String[] perms;
             if (Build.VERSION.SDK_INT >= 33) {
@@ -484,6 +452,66 @@ public class MainActivity extends Activity {
             }
             requestPermissions(perms, PERMISSION_REQUEST_CODE);
         }
+
+        // 2. 忽略电池优化
+        requestIgnoreBatteryOptimization();
+
+        // 3. 跳转厂商自启动/关联启动/后台活动设置
+        handler.postDelayed(this::openAutoStartSettings, 800);
+    }
+
+    private void requestIgnoreBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= 23) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                try {
+                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                } catch (Exception e) {
+                    // 部分ROM不支持，降级到电池优化列表
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                        startActivity(intent);
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+    }
+
+    // 尝试打开厂商自启动/关联启动/后台活动设置页面
+    private void openAutoStartSettings() {
+        // 各厂商自启动管理页面的Intent（覆盖主流国产ROM）
+        Intent[][] intents = {
+            // OPPO / Realme / OnePlus (ColorOS)
+            { new Intent().setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")) },
+            { new Intent().setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity")) },
+            { new Intent().setComponent(new ComponentName("com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity")) },
+            // 小米 (MIUI)
+            { new Intent().setComponent(new ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")) },
+            // 华为 (EMUI)
+            { new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity")) },
+            { new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")) },
+            // Vivo (OriginOS / FuntouchOS)
+            { new Intent().setComponent(new ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")) },
+            { new Intent().setComponent(new ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity")) },
+            // 三星
+            { new Intent().setComponent(new ComponentName("com.samsung.android.lool", "com.samsung.android.sm.battery.ui.BatteryActivity")) },
+        };
+
+        for (Intent[] group : intents) {
+            for (Intent intent : group) {
+                try {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    if (getPackageManager().resolveActivity(intent, 0) != null) {
+                        startActivity(intent);
+                        return;
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        // 所有厂商页面都无法打开时，Toast提示用户手动设置
+        showToast("请在系统设置中手动开启自启动/关联启动/后台活动权限");
     }
 
     @Override
@@ -493,7 +521,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ── 状态刷新 ──────────────────────────────────────────────────
+    // ── 状态刷新 ─────────────────────────────────────────────────
 
     private void refreshStatus() {
         // SMS权限
@@ -502,7 +530,7 @@ public class MainActivity extends Activity {
             hasSms = checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
                   && checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED;
         }
-        setStatusText(statusSms, "SMS RECEIVE / READ", hasSms ? "GRANTED" : "DENIED", hasSms);
+        setStatusText(statusSms, "SMS", hasSms ? "GRANTED" : "DENIED", hasSms);
 
         // 通知权限
         boolean hasNotif = true;
@@ -511,24 +539,37 @@ public class MainActivity extends Activity {
         }
         setStatusText(statusNotification, "NOTIFICATION", hasNotif ? "GRANTED" : "DENIED", hasNotif);
 
+        // 电池优化
+        boolean batteryIgnored = false;
+        if (Build.VERSION.SDK_INT >= 23) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            batteryIgnored = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        }
+        setStatusText(statusBattery, "BATTERY OPT", batteryIgnored ? "IGNORED" : "NOT IGNORED", batteryIgnored);
+
+        // 自启动（无标准API可检测，只能提示用户确认）
+        setStatusText(statusAutoStart, "AUTO START", "CHECK MANUALLY", false);
+        statusAutoStart.setTextColor(Color.parseColor(C_TEXT_SEC));
+
         // 前台服务
-        setStatusText(statusService, "FOREGROUND SERVICE", "RUNNING", true);
+        setStatusText(statusService, "SERVICE", "RUNNING", true);
 
         // 上报统计
         SharedPreferences log = getSharedPreferences("sms_log", MODE_PRIVATE);
         int total = log.getInt("total_count", 0);
         String lastTime = log.getString("last_time", "-");
         String lastStatus = log.getString("last_status", "-");
-        statusStats.setText("REPORT STATS  " + total + " total  |  " + lastTime + "  " + lastStatus);
+        statusStats.setText("STATS  " + total + " total | " + lastTime + " " + lastStatus);
         statusStats.setTextColor(Color.parseColor(C_TEXT_SEC));
 
-        // 服务器连接
+        // 服务器连接（登录状态）
         SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
         String token = config.getString("auth_token", "");
+        String loggedUser = config.getString("logged_username", "");
         if (token.isEmpty()) {
-            setStatusText(statusServer, "SERVER CONNECTION", "NO TOKEN", false);
+            setStatusText(statusServer, "SERVER", "NOT LOGGED IN", false);
         } else {
-            setStatusText(statusServer, "SERVER CONNECTION", "TOKEN SET", true);
+            setStatusText(statusServer, "SERVER", "LOGGED IN (" + loggedUser + ")", true);
         }
     }
 
@@ -537,12 +578,10 @@ public class MainActivity extends Activity {
         tv.setTextColor(ok ? Color.parseColor(C_GREEN) : Color.parseColor(C_RED));
     }
 
-    // ── 配置 ──────────────────────────────────────────────────────
+    // ── 配置 ─────────────────────────────────────────────────────
 
     private void loadConfig() {
         SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
-        serverUrlInput.setText(config.getString("server_url", DEFAULT_SERVER));
-        // 显示登录状态
         String loggedUser = config.getString("logged_username", "");
         String token = config.getString("auth_token", "");
         if (!token.isEmpty() && !loggedUser.isEmpty()) {
@@ -552,19 +591,6 @@ public class MainActivity extends Activity {
             loginStatusText.setText("未登录");
             loginStatusText.setTextColor(Color.parseColor(C_RED));
         }
-    }
-
-    private void saveConfig() {
-        String url = serverUrlInput.getText().toString().trim();
-        if (url.isEmpty()) url = DEFAULT_SERVER;
-
-        SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
-        config.edit()
-            .putString("server_url", url)
-            .apply();
-
-        showToast("Server URL saved");
-        refreshStatus();
     }
 
     private void login() {
@@ -604,7 +630,6 @@ public class MainActivity extends Activity {
                     int len = is.read(buf);
                     is.close();
                     String resp = new String(buf, 0, len, java.nio.charset.StandardCharsets.UTF_8);
-                    // 简单解析token字段
                     String token = extractJsonValue(resp, "token");
                     if (token != null && !token.isEmpty()) {
                         config.edit()
@@ -670,47 +695,7 @@ public class MainActivity extends Activity {
         return json.substring(start + 1, end);
     }
 
-    // ── 测试连接 ──────────────────────────────────────────────────
-
-    private void testConnection() {
-        setStatusText(statusServer, "SERVER CONNECTION", "TESTING...", false);
-        statusServer.setTextColor(Color.parseColor(C_ACCENT));
-
-        SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
-        String serverUrl = config.getString("server_url", DEFAULT_SERVER);
-        String token = config.getString("auth_token", "");
-
-        executor.execute(() -> {
-            try {
-                URL url = new URL(serverUrl + "/api/user/profile");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("GET");
-                if (!token.isEmpty()) {
-                    conn.setRequestProperty("Authorization", "Bearer " + token);
-                }
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-                int code = conn.getResponseCode();
-                conn.disconnect();
-
-                handler.post(() -> {
-                    if (code == 200) {
-                        setStatusText(statusServer, "SERVER CONNECTION", "OK (" + code + ")", true);
-                    } else if (code == 401) {
-                        setStatusText(statusServer, "SERVER CONNECTION", "INVALID TOKEN (401)", false);
-                    } else {
-                        setStatusText(statusServer, "SERVER CONNECTION", "ERROR (" + code + ")", false);
-                    }
-                });
-            } catch (Exception e) {
-                handler.post(() -> {
-                    setStatusText(statusServer, "SERVER CONNECTION", "FAILED", false);
-                });
-            }
-        });
-    }
-
-    // ── 服务管理 ──────────────────────────────────────────────────
+    // ── 服务管理 ─────────────────────────────────────────────────
 
     private void startSmsMonitorService() {
         Intent intent = new Intent(this, SMSMonitorService.class);
@@ -721,22 +706,13 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void restartService() {
-        stopService(new Intent(this, SMSMonitorService.class));
-        handler.postDelayed(() -> {
-            startSmsMonitorService();
-            showToast("Service restarted");
-            refreshStatus();
-        }, 500);
-    }
-
-    // ── Toast（模拟前端toast样式） ───────────────────────────────
+    // ── Toast ────────────────────────────────────────────────────
 
     private void showToast(String msg) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
     }
 
-    // ── 工具 ────────────────────────────────────────────────────
+    // ── 工具 ─────────────────────────────────────────────────────
 
     private String escapeJson(String s) {
         if (s == null) return "null";
