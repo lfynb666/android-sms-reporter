@@ -68,6 +68,21 @@ public class MainActivity extends Activity {
     private Handler handler = new Handler(Looper.getMainLooper());
     private ExecutorService executor = Executors.newSingleThreadExecutor();
 
+    // 权限行View引用（用于隐藏已授权的行）
+    private View rowSms, divSms;
+    private View rowNotif, divNotif;
+    private View rowBattery, divBattery;
+    private View rowAutoStart;
+    // 权限区整体（标题+卡片）
+    private View permSectionTitle, permSectionCard;
+    // 登录区各元素引用
+    private View loginSectionTitle, loginCard, loginButton;
+    // 服务器状态面板
+    private View serverSection;
+    private TextView tvCpu, tvMemory, tvLoad, tvDisk, tvNetwork, tvBackend, tvDatabase;
+    // 自启动是否在当前ROM可用
+    private boolean autoStartAvailable = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -102,25 +117,41 @@ public class MainActivity extends Activity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(20), dp(16), dp(20), dp(16));
 
-        // ── 权限状态区（每行带独立申请按钮） ──
-        content.addView(buildSectionTitle("PERMISSION", "权限状态"));
-        content.addView(buildCardGroup(() -> {
+        // 预检测自启动是否在当前ROM可用
+        autoStartAvailable = isAutoStartAvailable();
+
+        // ── 权限状态区（每行带独立申请按钮，已授权的行隐藏） ──
+        permSectionTitle = buildSectionTitle("PERMISSION", "权限状态");
+        content.addView(permSectionTitle);
+        permSectionCard = buildCardGroup(() -> {
             LinearLayout group = new LinearLayout(this);
             group.setOrientation(LinearLayout.VERTICAL);
 
-            group.addView(buildPermissionRow("SMS", statusSms = new TextView(this), v -> requestSmsPermission()), matchWrap(0));
-            group.addView(buildDivider());
-            group.addView(buildPermissionRow("NOTIFICATION", statusNotification = new TextView(this), v -> requestNotificationPermission()), matchWrap(0));
-            group.addView(buildDivider());
-            group.addView(buildPermissionRow("BATTERY", statusBattery = new TextView(this), v -> requestIgnoreBatteryOptimization()), matchWrap(0));
-            group.addView(buildDivider());
-            group.addView(buildPermissionRow("AUTO START", statusAutoStart = new TextView(this), v -> openAutoStartSettings()), matchWrap(0));
+            rowSms = buildPermissionRow("SMS", statusSms = new TextView(this), v -> requestSmsPermission());
+            group.addView(rowSms, matchWrap(0));
+            divSms = buildDivider();
+            group.addView(divSms);
+
+            rowNotif = buildPermissionRow("NOTIFICATION", statusNotification = new TextView(this), v -> requestNotificationPermission());
+            group.addView(rowNotif, matchWrap(0));
+            divNotif = buildDivider();
+            group.addView(divNotif);
+
+            rowBattery = buildPermissionRow("BATTERY", statusBattery = new TextView(this), v -> requestIgnoreBatteryOptimization());
+            group.addView(rowBattery, matchWrap(0));
+            divBattery = buildDivider();
+            group.addView(divBattery);
+
+            rowAutoStart = buildPermissionRow("AUTO START", statusAutoStart = new TextView(this), v -> openAutoStartSettings());
+            group.addView(rowAutoStart, matchWrap(0));
 
             return group;
-        }), matchWrap(dp(12)));
+        });
+        content.addView(permSectionCard, matchWrap(dp(12)));
 
         // ── 登录区 ──
-        content.addView(buildSectionTitle("LOGIN", "账号登录"), matchWrap(dp(24)));
+        loginSectionTitle = buildSectionTitle("LOGIN", "账号登录");
+        content.addView(loginSectionTitle, matchWrap(dp(24)));
 
         // 登录状态
         loginStatusText = new TextView(this);
@@ -129,7 +160,7 @@ public class MainActivity extends Activity {
         loginStatusText.setPadding(0, dp(4), 0, dp(8));
         content.addView(loginStatusText, matchWrap(dp(4)));
 
-        content.addView(buildCardGroup(() -> {
+        loginCard = buildCardGroup(() -> {
             LinearLayout group = new LinearLayout(this);
             group.setOrientation(LinearLayout.VERTICAL);
             group.setPadding(dp(16), dp(14), dp(16), dp(14));
@@ -144,10 +175,15 @@ public class MainActivity extends Activity {
             group.addView(passwordInput, matchWrap(dp(6)));
 
             return group;
-        }), matchWrap(dp(6)));
+        });
+        content.addView(loginCard, matchWrap(dp(6)));
 
-        // 登录按钮
-        content.addView(buildAccentButton("LOGIN", v -> login()), matchWrap(dp(16)));
+        loginButton = buildAccentButton("LOGIN", v -> login());
+        content.addView(loginButton, matchWrap(dp(16)));
+
+        // ── 服务器状态面板 ──
+        serverSection = buildServerStatusPanel();
+        content.addView(serverSection, matchWrap(dp(24)));
 
         root.addView(content, matchWrap(0));
 
@@ -157,6 +193,8 @@ public class MainActivity extends Activity {
         loadConfig();
         refreshStatus();
         startSmsMonitorService();
+        // 定时刷新服务器状态（每30秒）
+        handler.post(serverStatusRunnable);
     }
 
     @Override
@@ -164,6 +202,12 @@ public class MainActivity extends Activity {
         super.onResume();
         refreshStatus();
         applyImmersiveMode();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        handler.removeCallbacks(serverStatusRunnable);
     }
 
     @Override
@@ -468,7 +512,8 @@ public class MainActivity extends Activity {
             { new Intent().setComponent(new ComponentName("com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity")) },
             // 小米 (MIUI)
             { new Intent().setComponent(new ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")) },
-            // 华为 (EMUI)
+            // 华为 (EMUI / HarmonyOS)
+            { new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity")) },
             { new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity")) },
             { new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")) },
             // Vivo (OriginOS / FuntouchOS)
@@ -509,14 +554,16 @@ public class MainActivity extends Activity {
             hasSms = checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
                   && checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED;
         }
-        setStatusText(statusSms, "SMS", hasSms ? "GRANTED" : "DENIED", hasSms);
+        rowSms.setVisibility(hasSms ? View.GONE : View.VISIBLE);
+        divSms.setVisibility(hasSms ? View.GONE : View.VISIBLE);
 
         // 通知权限
         boolean hasNotif = true;
         if (Build.VERSION.SDK_INT >= 33) {
             hasNotif = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
         }
-        setStatusText(statusNotification, "NOTIFICATION", hasNotif ? "GRANTED" : "DENIED", hasNotif);
+        rowNotif.setVisibility(hasNotif ? View.GONE : View.VISIBLE);
+        divNotif.setVisibility(hasNotif ? View.GONE : View.VISIBLE);
 
         // 电池优化
         boolean batteryIgnored = false;
@@ -524,11 +571,22 @@ public class MainActivity extends Activity {
             PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
             batteryIgnored = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
         }
-        setStatusText(statusBattery, "BATTERY", batteryIgnored ? "IGNORED" : "NOT IGNORED", batteryIgnored);
+        rowBattery.setVisibility(batteryIgnored ? View.GONE : View.VISIBLE);
+        divBattery.setVisibility(batteryIgnored ? View.GONE : View.VISIBLE);
 
-        // 自启动（无标准API可检测，只能提示用户确认）
-        setStatusText(statusAutoStart, "AUTO START", "OPEN SETTINGS", false);
-        statusAutoStart.setTextColor(Color.parseColor(C_TEXT_SEC));
+        // 自启动（非国产ROM不显示此行）
+        if (!autoStartAvailable) {
+            rowAutoStart.setVisibility(View.GONE);
+        }
+
+        // 如果所有权限行都隐藏，则整个权限区隐藏
+        boolean allGranted = hasSms && hasNotif && batteryIgnored && !autoStartAvailable;
+        if (autoStartAvailable) {
+            // 自启动无法检测状态，只要行还在就不算全部完成
+            allGranted = false;
+        }
+        permSectionTitle.setVisibility(allGranted ? View.GONE : View.VISIBLE);
+        permSectionCard.setVisibility(allGranted ? View.GONE : View.VISIBLE);
     }
 
     private void setStatusText(TextView tv, String label, String status, boolean ok) {
@@ -542,12 +600,20 @@ public class MainActivity extends Activity {
         SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
         String loggedUser = config.getString("logged_username", "");
         String token = config.getString("auth_token", "");
-        if (!token.isEmpty() && !loggedUser.isEmpty()) {
+        boolean loggedIn = !token.isEmpty() && !loggedUser.isEmpty();
+        if (loggedIn) {
             loginStatusText.setText("已登录: " + loggedUser);
             loginStatusText.setTextColor(Color.parseColor(C_GREEN));
+            // 隐藏登录表单和按钮
+            loginSectionTitle.setVisibility(View.GONE);
+            loginCard.setVisibility(View.GONE);
+            loginButton.setVisibility(View.GONE);
         } else {
             loginStatusText.setText("未登录");
             loginStatusText.setTextColor(Color.parseColor(C_RED));
+            loginSectionTitle.setVisibility(View.VISIBLE);
+            loginCard.setVisibility(View.VISIBLE);
+            loginButton.setVisibility(View.VISIBLE);
         }
     }
 
@@ -595,10 +661,9 @@ public class MainActivity extends Activity {
                             .putString("logged_username", username)
                             .apply();
                         handler.post(() -> {
-                            loginStatusText.setText("已登录: " + username);
-                            loginStatusText.setTextColor(Color.parseColor(C_GREEN));
                             passwordInput.setText("");
                             showToast("登录成功");
+                            loadConfig();
                             refreshStatus();
                         });
                     } else {
@@ -668,6 +733,245 @@ public class MainActivity extends Activity {
 
     private void showToast(String msg) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+    }
+
+    // ── 自启动检测 ─────────────────────────────────────────────────
+
+    // 检测当前ROM是否有厂商自启动管理页面可用
+    private boolean isAutoStartAvailable() {
+        Intent[][] intents = {
+            { new Intent().setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")) },
+            { new Intent().setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity")) },
+            { new Intent().setComponent(new ComponentName("com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity")) },
+            { new Intent().setComponent(new ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")) },
+            { new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity")) },
+            { new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity")) },
+            { new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")) },
+            { new Intent().setComponent(new ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")) },
+            { new Intent().setComponent(new ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity")) },
+            { new Intent().setComponent(new ComponentName("com.samsung.android.lool", "com.samsung.android.sm.battery.ui.BatteryActivity")) },
+        };
+        for (Intent[] group : intents) {
+            for (Intent intent : group) {
+                try {
+                    if (getPackageManager().resolveActivity(intent, 0) != null) {
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        return false;
+    }
+
+    // ── 服务器状态面板 ──────────────────────────────────────────────
+
+    private View buildServerStatusPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+
+        panel.addView(buildSectionTitle("SERVER", "服务器状态"));
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(12), dp(16), dp(12));
+
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(Color.parseColor(C_CARD));
+        cardBg.setStroke(1, Color.parseColor(C_BORDER));
+        card.setBackground(cardBg);
+
+        tvCpu = buildMonitorItem("CPU");
+        card.addView(tvCpu, matchWrap(0));
+        card.addView(buildDivider());
+
+        tvMemory = buildMonitorItem("MEMORY");
+        card.addView(tvMemory, matchWrap(0));
+        card.addView(buildDivider());
+
+        tvLoad = buildMonitorItem("LOAD");
+        card.addView(tvLoad, matchWrap(0));
+        card.addView(buildDivider());
+
+        tvDisk = buildMonitorItem("DISK");
+        card.addView(tvDisk, matchWrap(0));
+        card.addView(buildDivider());
+
+        tvNetwork = buildMonitorItem("NETWORK");
+        card.addView(tvNetwork, matchWrap(0));
+        card.addView(buildDivider());
+
+        tvBackend = buildMonitorItem("BACKEND");
+        card.addView(tvBackend, matchWrap(0));
+        card.addView(buildDivider());
+
+        tvDatabase = buildMonitorItem("DATABASE");
+        card.addView(tvDatabase, matchWrap(0));
+
+        panel.addView(card, matchWrap(dp(12)));
+        return panel;
+    }
+
+    private TextView buildMonitorItem(String label) {
+        TextView tv = new TextView(this);
+        tv.setText(label + "  --");
+        tv.setTextColor(Color.parseColor(C_TEXT_SEC));
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        tv.setPadding(0, dp(6), 0, dp(6));
+        return tv;
+    }
+
+    private final Runnable serverStatusRunnable = new Runnable() {
+        @Override
+        public void run() {
+            fetchServerStatus();
+            handler.postDelayed(this, 30000); // 每30秒刷新
+        }
+    };
+
+    private void fetchServerStatus() {
+        SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
+        String serverUrl = config.getString("server_url", DEFAULT_SERVER);
+
+        executor.execute(() -> {
+            try {
+                URL url = new URL(serverUrl + "/api/system/status");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+
+                int code = conn.getResponseCode();
+                if (code == 200) {
+                    java.io.InputStream is = conn.getInputStream();
+                    byte[] buf = new byte[8192];
+                    int len = is.read(buf);
+                    is.close();
+                    String resp = new String(buf, 0, len, java.nio.charset.StandardCharsets.UTF_8);
+
+                    // 解析各字段
+                    String cpuPct = extractNestedValue(resp, "cpu", "percent");
+                    String memUsed = extractNestedValue(resp, "memory", "usedMB");
+                    String memTotal = extractNestedValue(resp, "memory", "totalMB");
+                    String memPct = extractNestedValue(resp, "memory", "percent");
+                    String load1 = extractNestedValue(resp, "load", "avg1");
+                    String load5 = extractNestedValue(resp, "load", "avg5");
+                    String load15 = extractNestedValue(resp, "load", "avg15");
+                    String diskUsed = extractNestedValue(resp, "disk", "usedGB");
+                    String diskTotal = extractNestedValue(resp, "disk", "totalGB");
+                    String diskPct = extractNestedValue(resp, "disk", "percent");
+                    String netRx = extractNestedValue(resp, "network", "rxMB");
+                    String netTx = extractNestedValue(resp, "network", "txMB");
+                    String backendStatus = extractNestedValue(resp, "backend", "status");
+                    String backendUptime = extractNestedValue(resp, "backend", "uptime");
+                    String backendMem = extractNestedValue(resp, "backend", "memoryMB");
+                    String dbStatus = extractJsonValue(resp, "database");
+
+                    handler.post(() -> {
+                        tvCpu.setText("CPU  " + cpuPct + "%");
+                        tvCpu.setTextColor(Color.parseColor(C_GREEN));
+
+                        tvMemory.setText("MEMORY  " + memUsed + " / " + memTotal + " MB (" + memPct + "%)");
+                        tvMemory.setTextColor(Color.parseColor(C_GREEN));
+
+                        tvLoad.setText("LOAD  " + load1 + " / " + load5 + " / " + load15);
+                        tvLoad.setTextColor(Color.parseColor(C_GREEN));
+
+                        tvDisk.setText("DISK  " + diskUsed + " / " + diskTotal + " GB (" + diskPct + "%)");
+                        tvDisk.setTextColor(Color.parseColor(C_GREEN));
+
+                        tvNetwork.setText("NETWORK  RX " + netRx + " MB / TX " + netTx + " MB");
+                        tvNetwork.setTextColor(Color.parseColor(C_TEXT_SEC));
+
+                        String uptimeStr = backendUptime != null ? formatUptime(backendUptime) : "?";
+                        tvBackend.setText("BACKEND  " + (backendStatus != null ? backendStatus : "?") + " | " + uptimeStr + " | " + backendMem + " MB");
+                        tvBackend.setTextColor("running".equals(backendStatus) ? Color.parseColor(C_GREEN) : Color.parseColor(C_RED));
+
+                        tvDatabase.setText("DATABASE  " + (dbStatus != null ? dbStatus : "?"));
+                        tvDatabase.setTextColor("connected".equals(dbStatus) ? Color.parseColor(C_GREEN) : Color.parseColor(C_RED));
+                    });
+                } else {
+                    handler.post(() -> {
+                        tvCpu.setText("CPU  ERROR (HTTP " + code + ")");
+                        tvCpu.setTextColor(Color.parseColor(C_RED));
+                    });
+                }
+                conn.disconnect();
+            } catch (Exception e) {
+                handler.post(() -> {
+                    tvCpu.setText("CPU  OFFLINE");
+                    tvCpu.setTextColor(Color.parseColor(C_RED));
+                    tvMemory.setText("MEMORY  --");
+                    tvMemory.setTextColor(Color.parseColor(C_TEXT_SEC));
+                    tvLoad.setText("LOAD  --");
+                    tvLoad.setTextColor(Color.parseColor(C_TEXT_SEC));
+                    tvDisk.setText("DISK  --");
+                    tvDisk.setTextColor(Color.parseColor(C_TEXT_SEC));
+                    tvNetwork.setText("NETWORK  --");
+                    tvNetwork.setTextColor(Color.parseColor(C_TEXT_SEC));
+                    tvBackend.setText("BACKEND  OFFLINE");
+                    tvBackend.setTextColor(Color.parseColor(C_RED));
+                    tvDatabase.setText("DATABASE  --");
+                    tvDatabase.setTextColor(Color.parseColor(C_TEXT_SEC));
+                });
+            }
+        });
+    }
+
+    // 从嵌套JSON中提取值（简单实现：先定位外层key的{，再在其中找内层key）
+    private String extractNestedValue(String json, String outerKey, String innerKey) {
+        String outerSearch = "\"" + outerKey + "\"";
+        int outerIdx = json.indexOf(outerSearch);
+        if (outerIdx < 0) return null;
+        int braceStart = json.indexOf('{', outerIdx);
+        if (braceStart < 0) return null;
+        int braceEnd = json.indexOf('}', braceStart);
+        if (braceEnd < 0) return null;
+        String sub = json.substring(braceStart, braceEnd + 1);
+        return extractJsonNumberOrString(sub, innerKey);
+    }
+
+    // 提取JSON中的数字值（不带引号）
+    private String extractJsonNumber(String json, String key) {
+        return extractJsonNumberOrString(json, key);
+    }
+
+    // 提取JSON中的值（数字或字符串）
+    private String extractJsonNumberOrString(String json, String key) {
+        String search = "\"" + key + "\"";
+        int idx = json.indexOf(search);
+        if (idx < 0) return null;
+        int colonIdx = json.indexOf(':', idx + search.length());
+        if (colonIdx < 0) return null;
+        // 跳过冒号后的空白
+        int valStart = colonIdx + 1;
+        while (valStart < json.length() && json.charAt(valStart) == ' ') valStart++;
+        if (valStart >= json.length()) return null;
+        if (json.charAt(valStart) == '"') {
+            // 字符串值
+            int end = json.indexOf('"', valStart + 1);
+            if (end < 0) return null;
+            return json.substring(valStart + 1, end);
+        } else {
+            // 数字值
+            int end = valStart;
+            while (end < json.length() && json.charAt(end) != ',' && json.charAt(end) != '}' && json.charAt(end) != ' ') end++;
+            return json.substring(valStart, end);
+        }
+    }
+
+    private String formatUptime(String seconds) {
+        try {
+            int s = Integer.parseInt(seconds);
+            int d = s / 86400;
+            int h = (s % 86400) / 3600;
+            int m = (s % 3600) / 60;
+            if (d > 0) return d + "d " + h + "h";
+            if (h > 0) return h + "h " + m + "m";
+            return m + "m";
+        } catch (Exception e) {
+            return seconds + "s";
+        }
     }
 
     // ── 工具 ─────────────────────────────────────────────────────
