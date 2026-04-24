@@ -108,13 +108,13 @@ public class MainActivity extends Activity {
             LinearLayout group = new LinearLayout(this);
             group.setOrientation(LinearLayout.VERTICAL);
 
-            group.addView(buildPermissionRow("SMS", statusSms = new TextView(this), v -> requestSmsPermission()));
+            group.addView(buildPermissionRow("SMS", statusSms = new TextView(this), v -> requestSmsPermission()), matchWrap(0));
             group.addView(buildDivider());
-            group.addView(buildPermissionRow("NOTIFICATION", statusNotification = new TextView(this), v -> requestNotificationPermission()));
+            group.addView(buildPermissionRow("NOTIFICATION", statusNotification = new TextView(this), v -> requestNotificationPermission()), matchWrap(0));
             group.addView(buildDivider());
-            group.addView(buildPermissionRow("BATTERY", statusBattery = new TextView(this), v -> requestIgnoreBatteryOptimization()));
+            group.addView(buildPermissionRow("BATTERY", statusBattery = new TextView(this), v -> requestIgnoreBatteryOptimization()), matchWrap(0));
             group.addView(buildDivider());
-            group.addView(buildPermissionRow("AUTO START", statusAutoStart = new TextView(this), v -> openAutoStartSettings()));
+            group.addView(buildPermissionRow("AUTO START", statusAutoStart = new TextView(this), v -> openAutoStartSettings()), matchWrap(0));
 
             return group;
         }), matchWrap(dp(12)));
@@ -279,24 +279,22 @@ public class MainActivity extends Activity {
     }
 
     private View buildCardGroup(CardContentBuilder builder) {
-        FrameLayout card = new FrameLayout(this);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
 
         GradientDrawable cardBg = new GradientDrawable();
         cardBg.setColor(Color.parseColor(C_CARD));
         cardBg.setStroke(1, Color.parseColor(C_BORDER));
         card.setBackground(cardBg);
 
+        // 左侧黄色装饰条
         View accent = new View(this);
         accent.setBackgroundColor(Color.parseColor(C_ACCENT));
-        FrameLayout.LayoutParams accentLp = new FrameLayout.LayoutParams(dp(3), ViewGroup.LayoutParams.MATCH_PARENT);
-        accentLp.gravity = Gravity.START;
-        card.addView(accent, accentLp);
+        card.addView(accent, new LinearLayout.LayoutParams(dp(3), ViewGroup.LayoutParams.MATCH_PARENT));
 
+        // 右侧内容区（占满剩余宽度，高度自适应）
         View contentView = builder.build();
-        FrameLayout.LayoutParams contentLp = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        contentLp.leftMargin = dp(3);
-        card.addView(contentView, contentLp);
+        card.addView(contentView, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         return card;
     }
@@ -309,8 +307,6 @@ public class MainActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(16), dp(10), dp(8), dp(10));
-        row.setLayoutParams(new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // 状态文字（占满左侧剩余空间）
         statusTv.setText(label + "  --");
