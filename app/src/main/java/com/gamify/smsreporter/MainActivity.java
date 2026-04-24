@@ -62,9 +62,6 @@ public class MainActivity extends Activity {
     private TextView statusNotification;
     private TextView statusBattery;
     private TextView statusAutoStart;
-    private TextView statusService;
-    private TextView statusServer;
-    private TextView statusStats;
     private EditText usernameInput;
     private EditText passwordInput;
     private TextView loginStatusText;
@@ -100,91 +97,59 @@ public class MainActivity extends Activity {
         // ── 三色装饰线 ──
         root.addView(buildDecoLine());
 
-        // ── 主内容区（权重填充剩余空间） ──
+        // ── 主内容区 ──
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(16), dp(12), dp(16), dp(12));
+        content.setPadding(dp(20), dp(16), dp(20), dp(16));
 
-        // ── 权限状态区 ──
+        // ── 权限状态区（每行带独立申请按钮） ──
         content.addView(buildSectionTitle("PERMISSION", "权限状态"));
         content.addView(buildCardGroup(() -> {
             LinearLayout group = new LinearLayout(this);
             group.setOrientation(LinearLayout.VERTICAL);
 
-            statusSms = buildStatusItem("SMS");
-            group.addView(statusSms);
+            group.addView(buildPermissionRow("SMS", statusSms = new TextView(this), v -> requestSmsPermission()));
             group.addView(buildDivider());
-
-            statusNotification = buildStatusItem("NOTIFICATION");
-            group.addView(statusNotification);
+            group.addView(buildPermissionRow("NOTIFICATION", statusNotification = new TextView(this), v -> requestNotificationPermission()));
             group.addView(buildDivider());
-
-            statusBattery = buildStatusItem("BATTERY OPT");
-            group.addView(statusBattery);
+            group.addView(buildPermissionRow("BATTERY", statusBattery = new TextView(this), v -> requestIgnoreBatteryOptimization()));
             group.addView(buildDivider());
-
-            statusAutoStart = buildStatusItem("AUTO START");
-            group.addView(statusAutoStart);
+            group.addView(buildPermissionRow("AUTO START", statusAutoStart = new TextView(this), v -> openAutoStartSettings()));
 
             return group;
-        }), matchWrap(dp(8)));
-
-        content.addView(buildAccentButton("REQUEST ALL PERMISSIONS", v -> requestAllPermissions()), matchWrap(dp(10)));
-
-        // ── 服务状态区 ──
-        content.addView(buildSectionTitle("STATUS", "服务状态"), matchWrap(dp(16)));
-        content.addView(buildCardGroup(() -> {
-            LinearLayout group = new LinearLayout(this);
-            group.setOrientation(LinearLayout.VERTICAL);
-
-            statusService = buildStatusItem("SERVICE");
-            group.addView(statusService);
-            group.addView(buildDivider());
-
-            statusServer = buildStatusItem("SERVER");
-            group.addView(statusServer);
-            group.addView(buildDivider());
-
-            statusStats = buildStatusItem("STATS");
-            group.addView(statusStats);
-
-            return group;
-        }), matchWrap(dp(8)));
+        }), matchWrap(dp(12)));
 
         // ── 登录区 ──
-        content.addView(buildSectionTitle("LOGIN", "账号登录"), matchWrap(dp(16)));
+        content.addView(buildSectionTitle("LOGIN", "账号登录"), matchWrap(dp(24)));
 
         // 登录状态
         loginStatusText = new TextView(this);
-        loginStatusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        loginStatusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         loginStatusText.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-        loginStatusText.setPadding(0, dp(2), 0, dp(4));
-        content.addView(loginStatusText, matchWrap(dp(2)));
+        loginStatusText.setPadding(0, dp(4), 0, dp(8));
+        content.addView(loginStatusText, matchWrap(dp(4)));
 
         content.addView(buildCardGroup(() -> {
             LinearLayout group = new LinearLayout(this);
             group.setOrientation(LinearLayout.VERTICAL);
-            group.setPadding(dp(12), dp(10), dp(12), dp(10));
+            group.setPadding(dp(16), dp(14), dp(16), dp(14));
 
             group.addView(buildFieldLabel("USERNAME"));
             usernameInput = buildInput("用户名");
-            group.addView(usernameInput, matchWrap(dp(4)));
+            group.addView(usernameInput, matchWrap(dp(6)));
 
-            group.addView(buildFieldLabel("PASSWORD"), matchWrap(dp(8)));
+            group.addView(buildFieldLabel("PASSWORD"), matchWrap(dp(12)));
             passwordInput = buildInput("密码");
             passwordInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-            group.addView(passwordInput, matchWrap(dp(4)));
+            group.addView(passwordInput, matchWrap(dp(6)));
 
             return group;
         }), matchWrap(dp(6)));
 
         // 登录按钮
-        content.addView(buildAccentButton("LOGIN", v -> login()), matchWrap(dp(10)));
+        content.addView(buildAccentButton("LOGIN", v -> login()), matchWrap(dp(16)));
 
-        // 用权重让内容区填充剩余空间
-        LinearLayout.LayoutParams contentLp = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        root.addView(content, contentLp);
+        root.addView(content, matchWrap(0));
 
         setContentView(root);
 
@@ -338,14 +303,37 @@ public class MainActivity extends Activity {
 
     // ── 状态行 ───────────────────────────────────────────────────
 
-    private TextView buildStatusItem(String label) {
-        TextView tv = new TextView(this);
-        tv.setText(label + "  --");
-        tv.setTextColor(Color.parseColor(C_TEXT_SEC));
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        tv.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-        tv.setPadding(dp(12), dp(8), dp(12), dp(8));
-        return tv;
+    // 权限行：左边状态文字 + 右边小申请按钮
+    private View buildPermissionRow(String label, TextView statusTv, View.OnClickListener onRequest) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(10), dp(8), dp(10));
+
+        // 状态文字（占满左侧剩余空间）
+        statusTv.setText(label + "  --");
+        statusTv.setTextColor(Color.parseColor(C_TEXT_SEC));
+        statusTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        statusTv.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        row.addView(statusTv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        // 右侧小按钮
+        TextView btn = new TextView(this);
+        btn.setText("REQUEST");
+        btn.setTextColor(Color.parseColor(C_BG));
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        btn.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        btn.setLetterSpacing(0.05f);
+        btn.setGravity(Gravity.CENTER);
+        btn.setPadding(dp(12), dp(6), dp(12), dp(6));
+        GradientDrawable btnBg = new GradientDrawable();
+        btnBg.setColor(Color.parseColor(C_ACCENT));
+        btn.setBackground(btnBg);
+        btn.setClickable(true);
+        btn.setOnClickListener(onRequest);
+        row.addView(btn);
+
+        return row;
     }
 
     private View buildDivider() {
@@ -381,11 +369,11 @@ public class MainActivity extends Activity {
         TextView btn = new TextView(this);
         btn.setText(text);
         btn.setTextColor(Color.parseColor(textColor));
-        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         btn.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         btn.setLetterSpacing(0.05f);
         btn.setGravity(Gravity.CENTER);
-        btn.setPadding(dp(16), dp(10), dp(16), dp(10));
+        btn.setPadding(dp(20), dp(14), dp(20), dp(14));
         wrapper.addView(btn);
 
         wrapper.setClickable(true);
@@ -434,30 +422,23 @@ public class MainActivity extends Activity {
 
     // ── 权限申请 ─────────────────────────────────────────────────
 
-    private void requestAllPermissions() {
-        // 1. 运行时权限（SMS + 通知）
+    private void requestSmsPermission() {
         if (Build.VERSION.SDK_INT >= 23) {
-            String[] perms;
-            if (Build.VERSION.SDK_INT >= 33) {
-                perms = new String[]{
-                    Manifest.permission.RECEIVE_SMS,
-                    Manifest.permission.READ_SMS,
-                    Manifest.permission.POST_NOTIFICATIONS
-                };
-            } else {
-                perms = new String[]{
-                    Manifest.permission.RECEIVE_SMS,
-                    Manifest.permission.READ_SMS
-                };
-            }
-            requestPermissions(perms, PERMISSION_REQUEST_CODE);
+            requestPermissions(new String[]{
+                Manifest.permission.RECEIVE_SMS,
+                Manifest.permission.READ_SMS
+            }, PERMISSION_REQUEST_CODE);
         }
+    }
 
-        // 2. 忽略电池优化
-        requestIgnoreBatteryOptimization();
-
-        // 3. 跳转厂商自启动/关联启动/后台活动设置
-        handler.postDelayed(this::openAutoStartSettings, 800);
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(new String[]{
+                Manifest.permission.POST_NOTIFICATIONS
+            }, PERMISSION_REQUEST_CODE);
+        } else {
+            showToast("Android 13以下无需单独申请通知权限");
+        }
     }
 
     private void requestIgnoreBatteryOptimization() {
@@ -545,32 +526,11 @@ public class MainActivity extends Activity {
             PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
             batteryIgnored = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
         }
-        setStatusText(statusBattery, "BATTERY OPT", batteryIgnored ? "IGNORED" : "NOT IGNORED", batteryIgnored);
+        setStatusText(statusBattery, "BATTERY", batteryIgnored ? "IGNORED" : "NOT IGNORED", batteryIgnored);
 
         // 自启动（无标准API可检测，只能提示用户确认）
-        setStatusText(statusAutoStart, "AUTO START", "CHECK MANUALLY", false);
+        setStatusText(statusAutoStart, "AUTO START", "OPEN SETTINGS", false);
         statusAutoStart.setTextColor(Color.parseColor(C_TEXT_SEC));
-
-        // 前台服务
-        setStatusText(statusService, "SERVICE", "RUNNING", true);
-
-        // 上报统计
-        SharedPreferences log = getSharedPreferences("sms_log", MODE_PRIVATE);
-        int total = log.getInt("total_count", 0);
-        String lastTime = log.getString("last_time", "-");
-        String lastStatus = log.getString("last_status", "-");
-        statusStats.setText("STATS  " + total + " total | " + lastTime + " " + lastStatus);
-        statusStats.setTextColor(Color.parseColor(C_TEXT_SEC));
-
-        // 服务器连接（登录状态）
-        SharedPreferences config = getSharedPreferences("config", MODE_PRIVATE);
-        String token = config.getString("auth_token", "");
-        String loggedUser = config.getString("logged_username", "");
-        if (token.isEmpty()) {
-            setStatusText(statusServer, "SERVER", "NOT LOGGED IN", false);
-        } else {
-            setStatusText(statusServer, "SERVER", "LOGGED IN (" + loggedUser + ")", true);
-        }
     }
 
     private void setStatusText(TextView tv, String label, String status, boolean ok) {
