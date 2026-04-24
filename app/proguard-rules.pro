@@ -1,0 +1,1 @@
+# SMS Reporter ProGuard rules
